@@ -8,36 +8,31 @@ import itertools
 st.set_page_config(page_title="Pro Punter Dashboard", page_icon="⚖️", layout="wide")
 API_KEY = 'ae33f20cd78d0b2b015703ded3330fcb'
 
-# Initialiseer de database in de sessie
+# Initialiseer sessie-variabelen
 if 'bet_history' not in st.session_state:
-    st.session_state.bet_history = pd.DataFrame(columns=["Datum", "Slip_Type", "Wedstrijden", "Totale_Odd", "Status"])
+    st.session_state.bet_history = pd.DataFrame(columns=["Datum", "Type", "Wedstrijden", "Odd", "Resultaat", "Winst"])
 
-st.title("⚖️ Professional Betting & Audit System")
-st.markdown(f"**Handelsdag:** Woensdag 25 februari 2026 | **Systeemstatus:** Live Monitoring")
+if 'current_slips' not in st.session_state:
+    st.session_state.current_slips = []
 
-# --- 2. MULTI-SPORT SCANNER ---
-SPORTS = {
-    "Voetbal (Global)": "soccer", 
-    "Tennis (ATP/WTA)": "tennis",
-    "Basketbal (NBA/EU)": "basketball",
-    "IJshockey (NHL)": "icehockey"
-}
+st.title("⚖️ Professional Betting Audit System")
+st.markdown(f"**Handelsdag:** Woensdag 25 februari 2026")
 
-with st.expander("🔍 Scanner Instellingen", expanded=True):
-    selected_sports = st.multiselect("Selecteer markten voor analyse:", list(SPORTS.keys()), default=list(SPORTS.keys()))
-    scan_btn = st.button("🚀 START MARKTANALYSE")
+# --- 2. SCANNER & GENERATOR ---
+with st.sidebar:
+    st.header("🔍 Markt Scanner")
+    sport_selection = st.multiselect("Sporten:", ["soccer", "tennis", "basketball", "icehockey"], default=["soccer", "tennis"])
+    scan_btn = st.button("🚀 SCAN ALLE MARKTEN")
 
-all_valid_matches = []
 if scan_btn:
+    all_valid_matches = []
     vandaag_str = "2026-02-25"
-    with st.spinner("Data-mining wereldwijde sportmarkten..."):
-        # We halen eerst alle actieve competities op voor de geselecteerde sporten
-        all_leagues_url = f"https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}"
-        leagues_data = requests.get(all_leagues_url).json()
+    
+    with st.spinner("Data verzamelen..."):
+        # We scannen de meest actieve competities voor vandaag
+        leagues = ["soccer_uefa_champs_league", "soccer_epl", "soccer_netherlands_eredivisie", "tennis_atp_dubai", "basketball_nba"]
         
-        target_keys = [l['key'] for l in leagues_data if any(s.split(' ')[0].lower() in l['key'].lower() for s in selected_sports)]
-
-        for key in target_keys[:15]: # Limiet om API-credits te sparen
+        for key in leagues:
             url = f"https://api.the-odds-api.com/v4/sports/{key}/odds/"
             params = {'apiKey': API_KEY, 'regions': 'eu', 'markets': 'h2h,totals', 'oddsFormat': 'decimal'}
             try:
@@ -47,45 +42,23 @@ if scan_btn:
                     for game in data:
                         if vandaag_str in game['commence_time']:
                             tijd = datetime.fromisoformat(game['commence_time'].replace('Z', '')).strftime('%H:%M')
-                            if game['bookmakers']:
-                                for market in game['bookmakers'][0]['markets']:
+                            bm = game['bookmakers'][0] if game['bookmakers'] else None
+                            if bm:
+                                for market in bm['markets']:
                                     for outcome in market['outcomes']:
                                         price = outcome['price']
-                                        # Professional Safe Range: 1.12 - 1.45
                                         if 1.12 <= price <= 1.45:
-                                            # Filter voor Totals: enkel safe lines
-                                            if market['key'] == 'totals' and outcome['point'] > 2.5 and "soccer" in key: continue 
-                                            
-                                            label = f"{outcome['name']}" if market['key'] == 'h2h' else f"{outcome['name']} {outcome.get('point', '')}"
-                                            all_valid_matches.append({
-                                                "Tijd": tijd,
-                                                "Match": f"{game['home_team']} vs {game['away_team']}",
-                                                "Selectie": label,
-                                                "Odd": price,
-                                                "Sport": game['sport_title']
-                                            })
+                                            label = f"{outcome['name']}" if market['key'] == 'h2h' else f"{outcome['name']} {outcome.get('point','')}"
+                                            all_valid_matches.append({"Tijd": tijd, "Match": f"{game['home_team']} - {game['away_team']}", "Keuze": label, "Odd": price})
             except: continue
 
-# --- 3. GENERATOR & PRESENTATIE ---
-if all_valid_matches:
-    df = pd.DataFrame(all_valid_matches).drop_duplicates(subset=['Match', 'Selectie'])
-    st.subheader("📊 Gevonden Waarde-Elementen")
-    st.dataframe(df, use_container_width=True, hide_index=True)
-
-    st.divider()
-    st.subheader("📑 Gegenereerde Betslips")
-    
-    targets = [1.5, 2.0, 3.0, 5.0]
-    match_pool = df.to_dict('records')
-    cols = st.columns(4)
-
-    for idx, target in enumerate(targets):
-        with cols[idx]:
-            st.markdown(f"""
-            <div style="border: 1px solid #ddd; padding: 15px; border-radius: 10px; background-color: #f9f9f9; color: #333">
-                <h4 style="margin-top:0">SLIP TARGET {target}</h4>
-            """, unsafe_allow_html=True)
-            
+    if all_valid_matches:
+        df_matches = pd.DataFrame(all_valid_matches).drop_duplicates(subset=['Match', 'Keuze'])
+        match_pool = df_matches.to_dict('records')
+        
+        # Genereer de 4 types
+        st.session_state.current_slips = []
+        for target in [1.5, 2.0, 3.0, 5.0]:
             best_combo = None
             closest_diff = 999
             for r in range(2, 5):
@@ -98,45 +71,68 @@ if all_valid_matches:
                         final_odd = total_odd
             
             if best_combo:
-                match_str_list = []
-                for m in best_combo:
-                    st.markdown(f"**{m['Tijd']}** | {m['Match']}<br><small>{m['Selectie']} @ {m['Odd']}</small>", unsafe_allow_html=True)
-                    match_str_list.append(f"{m['Match']} ({m['Selectie']})")
-                
-                st.markdown(f"<h3 style='color: #1e88e5'>Totaal: {round(final_odd, 2)}</h3>", unsafe_allow_html=True)
-                
-                if st.button(f"💾 Sla Slip {target} op", key=f"save_{target}"):
-                    new_entry = {
-                        "Datum": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "Slip_Type": f"Target {target}",
-                        "Wedstrijden": " | ".join(match_str_list),
-                        "Totale_Odd": round(final_odd, 2),
-                        "Status": "OPEN"
-                    }
-                    st.session_state.bet_history = pd.concat([st.session_state.bet_history, pd.DataFrame([new_entry])], ignore_index=True)
-                    st.toast(f"Slip {target} gearchiveerd.")
-            st.markdown("</div>", unsafe_allow_html=True)
+                st.session_state.current_slips.append({
+                    "Type": f"Target {target}",
+                    "Matches": " | ".join([f"{m['Match']} ({m['Keuze']} @{m['Odd']})" for m in best_combo]),
+                    "Odd": round(final_odd, 2)
+                })
 
-# --- 4. EXPORT & ARCHIEF ---
+# --- 3. DISPLAY & SAVE ALL ---
+if st.session_state.current_slips:
+    st.subheader("📑 Nieuwe Betslips van Vandaag")
+    cols = st.columns(4)
+    for idx, slip in enumerate(st.session_state.current_slips):
+        with cols[idx]:
+            st.markdown(f"""<div style="background:#f0f2f6; padding:10px; border-radius:5px; height:250px">
+            <b>{slip['Type']}</b><br><small>{slip['Matches']}</small><br><h3>@{slip['Odd']}</h3>
+            </div>""", unsafe_allow_html=True)
+    
+    st.write("")
+    if st.button("📥 SLA ALLE BOVENSTAANDE SLIPS OP IN ARCHIEF"):
+        new_entries = []
+        for s in st.session_state.current_slips:
+            new_entries.append({
+                "Datum": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "Type": s['Type'],
+                "Wedstrijden": s['Matches'],
+                "Odd": s['Odd'],
+                "Resultaat": "OPEN",
+                "Winst": 0.0
+            })
+        st.session_state.bet_history = pd.concat([st.session_state.bet_history, pd.DataFrame(new_entries)], ignore_index=True)
+        st.session_state.current_slips = [] # Leegmaken na opslaan
+        st.success("Alle slips succesvol gearchiveerd!")
+        st.rerun()
+
+# --- 4. ARCHIEF & ROI TRACKING ---
 st.divider()
-st.subheader("📂 Professioneel Archief & Export")
+st.subheader("📂 Professioneel Archief & Resultaten")
 
 if not st.session_state.bet_history.empty:
-    # Weergeven als een professionele audit-log
-    st.table(st.session_state.bet_history)
+    # ROI Berekening
+    total_inzet = len(st.session_state.bet_history) * 1.0 # Uitgaande van 1 unit per bet
+    totaal_winst = st.session_state.bet_history['Winst'].sum()
+    roi = ((totaal_winst - total_inzet) / total_inzet) * 100 if total_inzet > 0 else 0
     
-    c1, c2 = st.columns(2)
-    with c1:
-        csv = st.session_state.bet_history.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download Audit Log (CSV voor Excel)",
-            data=csv,
-            file_name=f"punter_audit_{datetime.now().strftime('%d_%m_%Y')}.csv",
-            mime="text/csv",
-        )
-    with c2:
-        if st.button("🗑️ Wis Archief"):
-            st.session_state.bet_history = pd.DataFrame(columns=["Datum", "Slip_Type", "Wedstrijden", "Totale_Odd", "Status"])
-            st.rerun()
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Totaal Inzet", f"{total_inzet} Units")
+    c2.metric("Netto Resultaat", f"{round(totaal_winst - total_inzet, 2)} Units")
+    c3.metric("ROI %", f"{round(roi, 2)}%")
+
+    # Tabel met resultaat-knop
+    edited_df = st.data_editor(st.session_state.bet_history, use_container_width=True, hide_index=True)
+    
+    # Update winst op basis van status (In de data_editor kun je Status aanpassen naar WON)
+    if st.button("🔄 Bereken Winst/Verlies"):
+        for index, row in edited_df.iterrows():
+            if row['Resultaat'] == "WON":
+                edited_df.at[index, 'Winst'] = row['Odd']
+            elif row['Resultaat'] == "LOST":
+                edited_df.at[index, 'Winst'] = 0.0
+        st.session_state.bet_history = edited_df
+        st.rerun()
+
+    csv = st.session_state.bet_history.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Download Database (Excel)", csv, "punter_database.csv", "text/csv")
 else:
-    st.info("Nog geen betslips opgeslagen voor export.")
+    st.info("Scan en sla slips op om je database te vullen.")
