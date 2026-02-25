@@ -2,68 +2,62 @@ import streamlit as st
 import pandas as pd
 import re
 
-# Deze regel MOET altijd als eerste staan na de imports
 st.set_page_config(page_title="Thai 0-0 Pro Scanner", page_icon="🇹🇭")
 
 st.title("🇹🇭 Thai League: 0-0 Analyser")
-st.markdown("""
-**Hoe gebruik je dit?**
-1. Ga naar **OddsPortal** (Thai League 1 - Correct Score).
-2. Kopieer de hele tabel (`Ctrl+A` -> `Ctrl+C`).
-3. Plak het hieronder en klik op de knop.
-""")
+st.markdown("Kopieer de tekst van OddsPortal en plak deze hieronder.")
 
-# Input veld voor de geplakte data
-input_data = st.text_area("Plak hier je OddsPortal data:", height=250, placeholder="Plak de tekst hier...")
+input_data = st.text_area("Plak hier de data:", height=250)
 
-def extract_odds_simple(text):
+def super_scan(text):
     results = []
-    # We splitsen de tekst in blokken per mogelijke wedstrijd/bookmaker
-    lines = text.split('\n')
+    # We splitsen op regels en verwijderen lege regels
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
     
-    current_match = "Onbekende wedstrijd"
-    
+    # We zoeken naar patronen: '0:0', '0-0', of regels met 'CS' (Correct Score)
     for i, line in enumerate(lines):
-        # Stap 1: Zoek naar team namen (bevatten vaak ' - ')
-        if " - " in line and ":" not in line:
-            current_match = line.strip()
+        # Zoek naar de 0-0 aanduiding
+        if "0:0" in line or "0-0" in line:
+            # Pak de omgeving van de 0-0 (deze regel en de volgende 3)
+            search_area = " ".join(lines[i:i+4])
             
-        # Stap 2: Zoek naar de 0:0 score
-        if "0:0" in line:
-            # We zoeken naar het getal (de odd) in de buurt van '0:0'
-            # We scannen de huidige en de volgende 2 regels
-            context = " ".join(lines[i:i+3])
-            # Zoek naar een getal zoals 8.50, 10.0, 12.5 etc.
-            odd_matches = re.findall(r'\d{1,2}\.\d{2}', context)
+            # Zoek naar alle getallen met een punt (bijv 9.50, 11.00)
+            odds = re.findall(r'\b\d{1,2}\.\d{2}\b', search_area)
             
-            if odd_matches:
-                # We pakken de hoogste odd die we in dit blokje vinden
-                best_odd = max([float(o) for o in odd_matches])
+            if odds:
+                # In de tabel van OddsPortal is de eerste odd vaak de hoogste of de gemiddelde
+                # We pakken de hoogste waarde uit de gevonden getallen
+                float_odds = [float(o) for o in odds]
+                best_odd = max(float_odds)
+                
+                # Probeer de wedstrijd te vinden (vaak een paar regels erboven)
+                match_name = "Wedstrijd gevonden via 0-0 scan"
+                for j in range(i, max(-1, i-10), -1):
+                    if " - " in lines[j] and ":" not in lines[j]:
+                        match_name = lines[j]
+                        break
+                
                 results.append({
-                    "Wedstrijd": current_match,
+                    "Wedstrijd": match_name,
                     "Uitslag": "0-0",
-                    "Beste Odd": best_odd
+                    "Hoogste Odd": best_odd
                 })
-    
+
     return pd.DataFrame(results).drop_duplicates(subset=['Wedstrijd'])
 
-if st.button('BEREKEN HOOGSTE ODDS'):
+if st.button('ANALYSEER DATA'):
     if input_data:
-        with st.spinner('Data analyseren...'):
-            df = extract_odds_simple(input_data)
-            if not df.empty:
-                st.success(f"Gevonden: {len(df)} wedstrijden")
-                # Sorteer op de hoogste odd
-                df = df.sort_values(by="Beste Odd", ascending=False)
-                st.table(df)
-                
-                # Berekening voor de gebruiker
-                top_match = df.iloc[0]
-                st.info(f"💡 **Tip:** De beste kans is momenteel **{top_match['Wedstrijd']}** met een odd van **{top_match['Beste Odd']}**.")
-            else:
-                st.warning("Geen '0:0' scores gevonden in de geplakte tekst. Probeer de hele pagina te kopiëren.")
+        df = super_scan(input_data)
+        if not df.empty:
+            st.success(f"Gevonden: {len(df)} 0-0 odds!")
+            st.table(df)
+            
+            # Professionele berekening op basis van 1 unit inzet
+            for _, row in df.iterrows():
+                winst = row['Hoogste Odd'] - 1
+                st.write(f"👉 **{row['Wedstrijd']}**: Inzet 1 unit -> Winst: **{winst:.2f}** units.")
+        else:
+            st.error("Nog steeds geen odds gevonden.")
+            st.info("💡 **Gouden Tip voor OddsPortal:** Klik op de wedstrijd -> 'Correct Score'. Selecteer dan met je muis de tekst vanaf '0:0' tot en met de getallen die erachter staan. Plak dat hier.")
     else:
-        st.error("Plak eerst de data van OddsPortal.")
-
-st.divider()
-st.caption("Gebruikt geen externe API's - 100% stabiel voor de Thaise markt.")
+        st.write("Plak eerst data.")
