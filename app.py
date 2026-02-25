@@ -1,128 +1,86 @@
 import streamlit as st
 import pandas as pd
 import requests
+import re
 from datetime import datetime
 import itertools
 
-# --- 1. CONFIGURATIE ---
-st.set_page_config(page_title="Pro Over 1.5 Generator", page_icon="📈", layout="wide")
+# --- CONFIGURATIE ---
+st.set_page_config(page_title="Over 1.5 Auto-Generator", page_icon="📈", layout="wide")
 API_KEY = 'ae33f20cd78d0b2b015703ded3330fcb'
 
 if 'archief' not in st.session_state:
-    st.session_state.archief = pd.DataFrame(columns=["Datum_Tijd", "Combinatie", "Totale_Odd", "Inzet"])
+    st.session_state.archief = pd.DataFrame(columns=["Tijd", "Combinatie", "Totale_Odd"])
 
-if 'manual_matches' not in st.session_state:
-    st.session_state.manual_matches = []
+st.title("📈 Smart Over 1.5 Generator")
+st.caption("Doel: Automatisch combinaties maken (1.15-1.40) | Max 2.30 totaal")
 
-st.title("📈 Safe Over 1.5 Bet Generator")
-st.caption("Focus: 1.15-1.40 per game | Max 3 games | Max slip odd 2.30")
+# --- BULK INPUT (DE SNELLE MANIER) ---
+st.subheader("📋 Stap 1: Plak OddsPortal Data")
+st.info("Kopieer de lijst met wedstrijden en odds van OddsPortal en plak ze hieronder. De generator vist de 'Over 1.5' odds er zelf uit.")
 
-# --- 2. SIDEBAR: DATA BEHEER ---
-with st.sidebar:
-    st.header("📂 Mijn Database")
-    if not st.session_state.archief.empty:
-        st.write(f"Opgeslagen slips: **{len(st.session_state.archief)}**")
-        csv = st.session_state.archief.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download CSV", csv, "over15_results.csv", "text/csv")
-        
-        st.divider()
-        if st.button("🗑️ Wis Alles"):
-            st.session_state.archief = pd.DataFrame(columns=["Datum_Tijd", "Combinatie", "Totale_Odd", "Inzet"])
-            st.session_state.manual_matches = []
-            st.rerun()
+raw_data = st.text_area("Plak hier je data:", height=150, placeholder="Ajax - PSV 1.25\nInter - Porto 1.18...")
 
-# --- 3. INPUT SECTIE ---
-tab1, tab2 = st.tabs(["🚀 API Scan (Grote Leagues)", "➕ Handmatige Match Toevoegen"])
-
-with tab1:
-    league_options = {
-        "Champions League": "soccer_uefa_champs_league",
-        "Eredivisie": "soccer_netherlands_eredivisie",
-        "Premier League": "soccer_epl",
-        "Bundesliga": "soccer_germany_bundesliga",
-        "Pro League (BE)": "soccer_belgium_first_division"
-    }
-    selected_leagues = st.multiselect("Scan deze competities:", list(league_options.keys()), default=["Champions League"])
-    scan_btn = st.button("START SCAN")
-
-with tab2:
-    st.subheader("Voeg een match toe die niet in de API staat")
-    c1, c2 = st.columns(2)
-    with c1:
-        m_name = st.text_input("Wedstrijd Naam:", placeholder="bijv. Ajax - PSV")
-    with c2:
-        m_odd = st.number_input("Over 1.5 Odd:", min_value=1.0, max_value=5.0, value=1.25, step=0.01)
+if st.button("GENEREER SLIPS UIT DATA"):
+    # We vissen namen en odds uit de tekst
+    # Zoekt naar patronen zoals "Team A - Team B" gevolgd door een getal tussen 1.10 en 1.50
+    matches_found = []
     
-    if st.button("Voeg toe aan wachtrij"):
-        if m_name:
-            st.session_state.manual_matches.append({"Match": m_name, "Odd": m_odd, "Tijd": "Handmatig"})
-            st.success(f"{m_name} toegevoegd!")
+    # Simpele extractie: zoek naar regels met een '-' en een decimaal getal
+    lines = raw_data.split('\n')
+    for line in lines:
+        odds = re.findall(r'\b1\.\d{2}\b', line) # Zoekt getallen zoals 1.25
+        if odds:
+            odd = float(odds[0])
+            if 1.15 <= odd <= 1.40:
+                # Probeer een naam te vinden (alles voor het getal)
+                name = re.sub(r'\b1\.\d{2}\b', '', line).strip().strip('-').strip()
+                if not name: name = f"Match met odd {odd}"
+                matches_found.append({"Match": name, "Odd": odd})
 
-# --- 4. LOGICA & GENERATOR ---
-all_matches = []
-
-# Voeg handmatige matches toe
-all_matches.extend(st.session_state.manual_matches)
-
-if scan_btn:
-    with st.spinner("Scannen naar Over 1.5 markten..."):
-        for league in selected_leagues:
-            url = f"https://api.the-odds-api.com/v4/sports/{league_options[league]}/odds/"
-            params = {'apiKey': API_KEY, 'regions': 'eu', 'markets': 'totals', 'oddsFormat': 'decimal'}
-            try:
-                r = requests.get(url, params=params)
-                if r.status_code == 200:
-                    data = r.json()
-                    for game in data:
-                        time = datetime.fromisoformat(game['commence_time'].replace('Z', '')).strftime('%d-%m %H:%M')
-                        if game['bookmakers']:
-                            for market in game['bookmakers'][0]['markets']:
-                                if market['key'] == 'totals':
-                                    for outcome in market['outcomes']:
-                                        if outcome['name'] == 'Over' and outcome['point'] == 1.5:
-                                            odd = outcome['price']
-                                            if 1.15 <= odd <= 1.40:
-                                                all_matches.append({"Match": f"{game['home_team']} - {game['away_team']}", "Odd": odd, "Tijd": time})
-            except:
-                st.error(f"Fout bij {league}")
-
-# Toon alle gevonden/toegevoegde matches
-if all_matches:
-    st.divider()
-    st.subheader("📋 Beschikbare Wedstrijden (1.15 - 1.40)")
-    st.table(pd.DataFrame(all_matches))
-
-    # Genereer combinaties
-    valid_combos = []
-    for r in [2, 3]: # Combos van 2 en 3
-        for combo in itertools.combinations(all_matches, r):
-            total_odd = 1
-            for match in combo:
-                total_odd *= match['Odd']
+    if len(matches_found) >= 2:
+        st.success(f"{len(matches_found)} geschikte wedstrijden gevonden!")
+        
+        # GENERATOR
+        valid_combos = []
+        for r in [2, 3]:
+            for combo in itertools.combinations(matches_found, r):
+                total_odd = 1.0
+                for m in combo: total_odd *= m['Odd']
+                
+                if total_odd <= 2.30:
+                    valid_combos.append({
+                        "Combinatie": " + ".join([m['Match'] for m in combo]),
+                        "Details": " x ".join([str(m['Odd']) for m in combo]),
+                        "Totaal": round(total_odd, 2)
+                    })
+        
+        if valid_combos:
+            st.subheader("🎯 Voorgestelde Safe Slips")
+            res_df = pd.DataFrame(valid_combos).sort_values(by="Totaal", ascending=False)
+            st.dataframe(res_df, use_container_width=True, hide_index=True)
             
-            if total_odd <= 2.30:
-                valid_combos.append({
-                    "Combinatie": " + ".join([m['Match'] for m in combo]),
-                    "Odds": " x ".join([str(m['Odd']) for m in combo]),
-                    "Totale Odd": round(total_odd, 2)
-                })
-
-    if valid_combos:
-        st.subheader("🎯 Beste Slip Combinaties")
-        combo_df = pd.DataFrame(valid_combos).sort_values(by="Totale Odd", ascending=False)
-        st.dataframe(combo_df, use_container_width=True, hide_index=True)
-        
-        sel_final = st.selectbox("Selecteer een slip om te bewaren:", combo_df['Combinatie'])
-        final_data = combo_df[combo_df['Combinatie'] == sel_final].iloc[0]
-        
-        if st.button("SLA SLIP OP"):
-            new_row = {
-                "Datum_Tijd": datetime.now().strftime("%d-%m %H:%M"),
-                "Combinatie": sel_final,
-                "Totale_Odd": final_data['Totale Odd'],
-                "Inzet": 1.0
-            }
-            st.session_state.archief = pd.concat([st.session_state.archief, pd.DataFrame([new_row])], ignore_index=True)
-            st.toast("Geregistreerd in CSV!")
+            # Opslaan in database
+            sel = st.selectbox("Kies slip om op te slaan:", res_df['Combinatie'])
+            if st.button("BEVESTIG & SLA OP IN CSV"):
+                row = res_df[res_df['Combinatie'] == sel].iloc[0]
+                new_entry = {
+                    "Tijd": datetime.now().strftime("%H:%M"),
+                    "Combinatie": row['Combinatie'],
+                    "Totale_Odd": row['Totaal']
+                }
+                st.session_state.archief = pd.concat([st.session_state.archief, pd.DataFrame([new_entry])], ignore_index=True)
+                st.toast("Opgeslagen in database!")
+        else:
+            st.warning("Geen combinaties gevonden onder de 2.30.")
     else:
-        st.info("Geen combinaties gevonden die aan de eisen voldoen.")
+        st.error("Kon geen wedstrijden vinden met odds tussen 1.15 en 1.40 in deze tekst.")
+
+# --- ARCHIEF ---
+st.divider()
+st.subheader("📊 Mijn Database (Over 1.5 Slips)")
+st.dataframe(st.session_state.archief, use_container_width=True)
+
+if not st.session_state.archief.empty:
+    csv = st.session_state.archief.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Download Database", csv, "over15_db.csv", "text/csv")
