@@ -5,78 +5,68 @@ from datetime import datetime, timezone
 import random
 
 # --- CONFIG ---
-st.set_page_config(page_title="Pro Punter - Evening Edition", layout="wide")
+st.set_page_config(page_title="Pro Punter - 422 Fix", layout="wide")
 API_KEY = 'ae33f20cd78d0b2b015703ded3330fcb'
 
-st.title("⚖️ Professional Punter - Evening Session")
-st.info("Scanner gericht op de wedstrijden van vanavond (Champions League & NBA).")
+st.title("⚖️ Pro Punter - Evening Session (Fix)")
+st.sidebar.write(f"💳 Credits: 321")
 
-def get_evening_bets():
-    # We focussen op voetbal voor vanavond (vanaf 18:00 UTC)
-    # Dit dwingt de API om verder te kijken dan de huidige live matchen
-    url = f"https://api.the-odds-api.com/v4/sports/upcoming/odds/"
-    params = {
-        'apiKey': API_KEY,
-        'regions': 'eu',
-        'markets': 'h2h,totals,btts',
-        'oddsFormat': 'decimal'
-    }
+# De belangrijkste leagues voor vanavond (Champions League, NBA, etc.)
+TARGET_LEAGUES = [
+    "soccer_uefa_champs_league", "soccer_epl", "basketball_nba", 
+    "soccer_netherlands_eredivisie", "soccer_spain_la_liga"
+]
+
+def get_clean_bets():
+    all_data = []
+    now = datetime.now(timezone.utc)
     
-    try:
-        r = requests.get(url, params=params)
-        
-        # CREDITS TONEN IN SIDEBAR
-        rem = r.headers.get('x-requests-remaining', 'Niet gevonden')
-        used = r.headers.get('x-requests-used', '0')
-        with st.sidebar:
-            st.metric("Resterende Credits", rem)
-            st.write(f"Vandaag verbruikt: {used}")
+    with st.spinner("Scannen van avondmarkten..."):
+        for league in TARGET_LEAGUES:
+            # We doen 1 markt per keer om de 422 error te voorkomen
+            url = f"https://api.the-odds-api.com/v4/sports/{league}/odds/"
+            params = {
+                'apiKey': API_KEY,
+                'regions': 'eu',
+                'markets': 'h2h,totals',
+                'oddsFormat': 'decimal'
+            }
+            try:
+                r = requests.get(url, params=params)
+                if r.status_code == 200:
+                    games = r.json()
+                    for g in games:
+                        m_time = datetime.fromisoformat(g['commence_time'].replace('Z', '+00:00'))
+                        # Alleen wedstrijden van vanavond (na nu)
+                        if m_time > now:
+                            if g.get('bookmakers'):
+                                bm = g['bookmakers'][0]
+                                for m in bm['markets']:
+                                    for o in m['outcomes']:
+                                        price = o['price']
+                                        # Professional Safe Range
+                                        if 1.10 <= price <= 1.55:
+                                            label = ""
+                                            if m['key'] == 'h2h': label = f"Favoriet scoort/wint: {o['name']}"
+                                            else: label = f"Goals: {o['name']} {o.get('point','')}"
+                                            
+                                            all_data.append({
+                                                "League": league.split('_')[-1].upper(),
+                                                "Tijd": m_time.strftime("%H:%M"),
+                                                "Match": f"{g['home_team']} - {g['away_team']}",
+                                                "Keuze": label,
+                                                "Odd": price
+                                            })
+            except: continue
+    return all_data
 
-        if r.status_code != 200:
-            st.error(f"API Error: {r.status_code}")
-            return None
-
-        all_data = []
-        games = r.json()
-        now = datetime.now(timezone.utc)
-
-        for g in games:
-            m_time = datetime.fromisoformat(g['commence_time'].replace('Z', '+00:00'))
-            
-            # FILTER: Alleen wedstrijden die nog MOETEN beginnen (na nu)
-            if m_time > now:
-                if g.get('bookmakers'):
-                    bm = g['bookmakers'][0]
-                    for m in bm['markets']:
-                        for o in m['outcomes']:
-                            # Jouw pro-range
-                            if 1.10 <= o['price'] <= 1.65:
-                                label = ""
-                                if m['key'] == 'h2h': label = f"Winst: {o['name']}"
-                                elif m['key'] == 'btts': label = f"BTTS: {o['name']}"
-                                elif m['key'] == 'totals': label = f"Goals: {o['name']} {o.get('point','')}"
-                                
-                                all_data.append({
-                                    "Sport": g['sport_title'],
-                                    "Tijd": m_time.strftime("%H:%M"),
-                                    "Datum": m_time.strftime("%d-%m"),
-                                    "Match": f"{g['home_team']} - {g['away_team']}",
-                                    "Keuze": label,
-                                    "Odd": o['price']
-                                })
-        return all_data
-    except Exception as e:
-        st.error(f"Fout: {e}")
-        return None
-
-# --- UI LOGICA ---
-if st.button("🚀 SCAN VOOR VANAVOND"):
-    data = get_evening_bets()
+# --- UI ---
+if st.button("🚀 GENEREER SLIPS VOOR VANAVOND"):
+    data = get_clean_bets()
     
-    if data and len(data) > 0:
-        st.success(f"Gevonden: {len(data)} opties voor vanavond!")
+    if data:
+        st.success(f"Gevonden: {len(data)} sterke kansen voor vanavond!")
         
-        # BOUW DE 4 SLIPS
         final_rows = []
         for target in [1.5, 2.0, 3.0, 5.0]:
             random.shuffle(data)
@@ -88,19 +78,19 @@ if st.button("🚀 SCAN VOOR VANAVOND"):
                     current_odd *= item['Odd']
                     slip_items.append({
                         "Slip": f"Target {target} (@{round(current_odd, 2)})",
-                        "Datum": item['Datum'], "Tijd": item['Tijd'], 
-                        "Match": f"[{item['Sport']}] {item['Match']}", 
+                        "Tijd": item['Tijd'], 
+                        "Match": f"[{item['League']}] {item['Match']}", 
                         "Keuze": item['Keuze'], "Odd": item['Odd']
                     })
                 else: break
             
             final_rows.extend(slip_items)
-            final_rows.append({k: "" for k in ["Slip", "Datum", "Tijd", "Match", "Keuze", "Odd"]})
+            final_rows.append({k: "" for k in ["Slip", "Tijd", "Match", "Keuze", "Odd"]})
             
         df = pd.DataFrame(final_rows)
         st.table(df)
         
         csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 DOWNLOAD CSV", csv, f"bets_avond_25_02.csv", "text/csv")
+        st.download_button("📥 DOWNLOAD CSV", csv, "pro_evening_bets.csv", "text/csv")
     else:
-        st.warning("Geen toekomstige wedstrijden gevonden in de huidige scan. Probeer de scan over een paar minuten opnieuw.")
+        st.error("Geen data gevonden. De API is mogelijk tijdelijk overbelast of de markten zijn gesloten.")
