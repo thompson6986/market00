@@ -9,22 +9,21 @@ st.set_page_config(page_title="Pro 0-0 Monitor", page_icon="⚽")
 
 st.title("⚽ 0-0 Correct Score Tracker")
 
-# Keuzemenu voor competities om de 422-fout te voorkomen
+# Bijgewerkte lijst met de Thai League 1 bovenaan
 league_options = {
+    'Thai League 1 (Tha)': 'soccer_thailand_thai_league_1',
+    'Eredivisie (Ned)': 'soccer_netherlands_eredivisie',
     'Premier League (Eng)': 'soccer_epl',
     'La Liga (Spa)': 'soccer_spain_la_liga',
     'Serie A (Ita)': 'soccer_italy_serie_a',
     'Bundesliga (Dui)': 'soccer_germany_bundesliga',
-    'Ligue 1 (Fra)': 'soccer_france_ligue_one',
-    'Eredivisie (Ned)': 'soccer_netherlands_eredivisie',
-    'Championship (Eng)': 'soccer_efl_champ'
+    'Ligue 1 (Fra)': 'soccer_france_ligue_one'
 }
 
 selected_league = st.selectbox("Kies een competitie:", list(league_options.keys()))
 league_id = league_options[selected_league]
 
 def get_data(chosen_league):
-    # We vragen nu data op voor één specifieke league
     url = f"https://api.the-odds-api.com/v4/sports/{chosen_league}/odds/"
     params = {
         'apiKey': API_KEY,
@@ -35,7 +34,12 @@ def get_data(chosen_league):
     
     try:
         r = requests.get(url, params=params)
-        if r.status_code != 200:
+        
+        # Specifieke check voor de 422 fout (vaak is de league dan niet beschikbaar in de API)
+        if r.status_code == 422:
+            st.warning(f"De competitie '{chosen_league}' is momenteel niet beschikbaar in de API. Dit kan gebeuren als er de komende dagen geen wedstrijden gepland staan.")
+            return pd.DataFrame()
+        elif r.status_code != 200:
             st.error(f"API Fout {r.status_code}: {r.text}")
             return pd.DataFrame()
             
@@ -49,15 +53,15 @@ def get_data(chosen_league):
             
             odd_00 = None
             if 'bookmakers' in game and len(game['bookmakers']) > 0:
-                # Check bookmakers voor de 0-0 odd
                 for bookmaker in game['bookmakers']:
                     for market in bookmaker['markets']:
                         if market['key'] == 'correct_score':
+                            # Zoek specifiek naar 0-0
                             for outcome in market['outcomes']:
                                 if outcome['name'] == '0-0':
                                     odd_00 = outcome['price']
                                     break
-                    if odd_00: break # Stop als we een odd gevonden hebben
+                    if odd_00: break 
             
             if odd_00:
                 results.append({
@@ -78,13 +82,13 @@ def get_data(chosen_league):
         return pd.DataFrame()
 
 if st.button('HAAL ODDS OP'):
-    with st.spinner(f'Bezig met ophalen van {selected_league}...'):
+    with st.spinner(f'Scannen van {selected_league}...'):
         df = get_data(league_id)
         if not df.empty:
             st.success(f"Gevonden resultaten voor {selected_league}:")
-            st.table(df) # Gebruik table voor een simpel, duidelijk overzicht
+            st.table(df)
         else:
-            st.warning(f"Geen 0-0 odds gevonden voor {selected_league}. Probeer een andere competitie.")
+            st.info(f"Geen 0-0 odds gevonden voor {selected_league}. Dit kan betekenen dat de bookmakers de 'Correct Score' markt voor deze competitie nog niet hebben geopend.")
 
 st.divider()
-st.caption("Tip: De 0-0 markt is vaak pas 24-48 uur voor de wedstrijd beschikbaar bij bookmakers.")
+st.caption(f"Status: Verbonden met API | Datum: {datetime.now().strftime('%d-%m-%Y')}")
