@@ -1,111 +1,127 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 import itertools
 import random
 
 # --- CONFIGURATIE ---
-st.set_page_config(page_title="Pro Multi-Market Generator", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="Ultimate Pro Punter", page_icon="🌍", layout="wide")
 API_KEY = 'ae33f20cd78d0b2b015703ded3330fcb'
 SHEET_URL = "https://docs.google.com/spreadsheets/d/10F4xl7dcHIpfN1xdLrZ2BNAn532OJk0_58ErD51rRE4/edit?usp=sharing"
-VANDAAG_STR = "2026-02-25"
 
-st.title("⚖️ Professional Multi-Market Generator")
-st.markdown(f"**Markten:** H2H, BTTS, Over/Under, Team Goals | **Datum:** {VANDAAG_STR}")
+st.title("🌍 Ultimate Multi-Sport & Market Generator")
+st.markdown(f"**Admin:** [Pro Bet Tracker]({SHEET_URL})")
 
-# --- SPORT CONFIG ---
-ALL_SPORTS = {
-    "Voetbal": ["soccer_epl", "soccer_uefa_champs_league", "soccer_netherlands_eredivisie", "soccer_spain_la_liga", "soccer_germany_bundesliga", "soccer_italy_serie_a"],
-    "Tennis": ["tennis_atp_dubai", "tennis_wta_doha"],
-    "Basketbal": ["basketball_nba", "basketball_euroleague"]
+# MAXIMALE LIJST VAN COMPETITIES
+ALL_SPORTS_EXPANDED = {
+    "Voetbal Elite": ["soccer_uefa_champs_league", "soccer_epl", "soccer_spain_la_liga", "soccer_germany_bundesliga", "soccer_italy_serie_a", "soccer_france_ligue_1"],
+    "Voetbal Sub": ["soccer_netherlands_eredivisie", "soccer_belgium_first_division", "soccer_portugal_primeira_liga", "soccer_turkey_super_lig", "soccer_efl_championship", "soccer_brazil_campeonato", "soccer_mexico_mx"],
+    "Basketbal": ["basketball_nba", "basketball_euroleague", "basketball_ncaab", "basketball_spain_acb", "basketball_turkey_tbsl"],
+    "Tennis": ["tennis_atp_dubai", "tennis_atp_acapulco", "tennis_wta_doha", "tennis_wta_austin"],
+    "IJshockey": ["icehockey_nhl", "icehockey_sweden_allsvenskan", "icehockey_finland_liiga", "icehockey_germany_del"],
+    "Overig": ["darts_pdc_world_championship", "handball_bundesliga", "volleyball_italy_superlega", "rugbyleague_nrl"]
 }
 
 if 'pool' not in st.session_state: st.session_state.pool = []
 if 'export_data' not in st.session_state: st.session_state.export_data = []
 
-# --- DIEPE SCANNER ---
-def deep_scan():
+def ultra_scan():
     matches = []
-    # We voegen de specifieke markten toe aan de API call
-    markets = "h2h,btts,totals" 
+    now = datetime.now(timezone.utc)
     
-    with st.spinner("Analyseren van Goals, BTTS en H2H markten..."):
-        for category, keys in ALL_SPORTS.items():
+    # We scannen op H2H, BTTS en Totals (Goals)
+    markets = "h2h,btts,totals"
+    
+    with st.spinner("Bezig met een massale scan van alle wereldwijde markten..."):
+        for category, keys in ALL_SPORTS_EXPANDED.items():
             for key in keys:
                 url = f"https://api.the-odds-api.com/v4/sports/{key}/odds/"
                 params = {'apiKey': API_KEY, 'regions': 'eu', 'markets': markets, 'oddsFormat': 'decimal'}
                 try:
                     r = requests.get(url, params=params)
                     if r.status_code == 200:
-                        for game in r.json():
-                            if VANDAAG_STR in game['commence_time']:
-                                dt = datetime.fromisoformat(game['commence_time'].replace('Z', ''))
+                        data = r.json()
+                        for game in data:
+                            match_time = datetime.fromisoformat(game['commence_time'].replace('Z', '+00:00'))
+                            
+                            # Filter: Moet vandaag zijn en nog niet begonnen
+                            if match_time > now and match_time.date() == now.date():
                                 if game['bookmakers']:
                                     bm = game['bookmakers'][0]
                                     for market in bm['markets']:
                                         for outcome in market['outcomes']:
                                             price = outcome['price']
                                             
-                                            # Filter op professional safe range
-                                            if 1.10 <= price <= 1.55:
-                                                m_name = ""
-                                                # Markten hernoemen voor overzicht
-                                                if market['key'] == 'h2h': m_name = f"Win: {outcome['name']}"
-                                                elif market['key'] == 'btts': m_name = f"BTTS: {outcome['name']}"
-                                                elif market['key'] == 'totals': m_name = f"Goals: {outcome['name']} {outcome['point']}"
+                                            # Professional Safe Range: 1.10 - 1.60 (iets ruimer voor meer resultaten)
+                                            if 1.10 <= price <= 1.60:
+                                                m_type = ""
+                                                if market['key'] == 'h2h': m_type = f"Win: {outcome['name']}"
+                                                elif market['key'] == 'btts': m_type = f"BTTS: {outcome['name']}"
+                                                elif market['key'] == 'totals': m_type = f"Goals: {outcome['name']} {outcome['point']}"
                                                 
                                                 matches.append({
-                                                    "Sport": category, "Datum": dt.strftime("%d-%m-%Y"), 
-                                                    "Tijd": dt.strftime("%H:%M"), "Match": f"{game['home_team']} - {game['away_team']}", 
-                                                    "Keuze": m_name, "Odd": price
+                                                    "Sport": category.split()[0],
+                                                    "Datum": match_time.strftime("%d-%m-%Y"),
+                                                    "Tijd": match_time.strftime("%H:%M"),
+                                                    "Match": f"{game['home_team']} - {game['away_team']}",
+                                                    "Keuze": m_type,
+                                                    "Odd": price
                                                 })
                 except: continue
-    return pd.DataFrame(matches).drop_duplicates(subset=['Match', 'Keuze']).to_dict('records')
+    return matches
 
-# --- UI CONTROLS ---
+# --- UI ---
 with st.sidebar:
-    st.header("⚙️ Instellingen")
-    if st.button("🚀 UPDATE LIVE DATA"):
-        st.session_state.pool = deep_scan()
+    st.header("⚙️ Controle Paneel")
+    if st.button("🚀 START MASSALE SCAN"):
+        st.session_state.pool = ultra_scan()
         st.success(f"{len(st.session_state.pool)} kansen gevonden!")
 
     st.divider()
-    random_btn = st.button("🎲 RANDOM SAFE BET")
-    standard_btn = st.button("📋 GENERATE DAILY 4")
+    if st.session_state.pool:
+        st.button("🎲 RANDOM SAFE BET", on_click=lambda: gen_random())
+        st.button("📋 GENERATE DAILY 4", on_click=lambda: gen_standard())
 
-# --- GENERATIE LOGICA ---
-if random_btn and st.session_state.pool:
-    selection = random.sample(st.session_state.pool, min(3, len(st.session_state.pool)))
-    total_odd = 1.0
-    st.subheader("🎲 Random Deep-Market Selection")
-    for s in selection:
-        total_odd *= s['Odd']
-        st.write(f"🔹 {s['Tijd']} | **{s['Match']}** | {s['Keuze']} (@{s['Odd']})")
-        st.session_state.export_data.append({"Slip_ID": f"RANDOM (@{round(total_odd,2)})", "Match_Datum": s['Datum'], "Tijd": s['Tijd'], "Wedstrijd": f"[{s['Sport']}] {s['Match']}", "Keuze": s['Keuze'], "Odd": s['Odd'], "Status": "OPEN"})
-    st.session_state.export_data.append({k: "" for k in ["Slip_ID", "Match_Datum", "Tijd", "Wedstrijd", "Keuze", "Odd", "Status"]})
+# --- GENERATIE FUNCTIES ---
+def gen_random():
+    if len(st.session_state.pool) >= 3:
+        selection = random.sample(st.session_state.pool, 3)
+        total_odd = 1.0
+        for s in selection: total_odd *= s['Odd']
+        
+        for s in selection:
+            st.session_state.export_data.append({
+                "Slip_ID": f"RANDOM (@{round(total_odd,2)})", "Match_Datum": s['Datum'], "Tijd": s['Tijd'], 
+                "Wedstrijd": f"[{s['Sport']}] {s['Match']}", "Keuze": s['Keuze'], "Odd": s['Odd'], "Status": "OPEN"
+            })
+        st.session_state.export_data.append({k: "" for k in ["Slip_ID", "Match_Datum", "Tijd", "Wedstrijd", "Keuze", "Odd", "Status"]})
 
-if standard_btn and st.session_state.pool:
-    cols = st.columns(4)
-    for idx, target in enumerate([1.5, 2.0, 3.0, 5.0]):
+def gen_standard():
+    for target in [1.5, 2.0, 3.0, 5.0]:
         best_combo, closest_diff = None, 999
+        # Gebruik een subset van de pool voor snelheid bij grote data
+        pool_sample = random.sample(st.session_state.pool, min(50, len(st.session_state.pool)))
         for r in range(2, 5):
-            for combo in itertools.combinations(st.session_state.pool, r):
+            for combo in itertools.combinations(pool_sample, r):
                 total = 1.0
                 for m in combo: total *= m['Odd']
                 if total >= target and abs(total - target) < closest_diff and total <= (target * 1.3):
                     closest_diff = abs(total - target)
                     best_combo, f_odd = combo, round(total, 2)
         
-        with cols[idx]:
-            if best_combo:
-                st.info(f"**Target {target} (@{f_odd})**")
-                for m in best_combo:
-                    st.write(f"⏱ {m['Tijd']} | {m['Keuze']}\n{m['Match']}")
-                    st.session_state.export_data.append({"Slip_ID": f"Target {target} (@{f_odd})", "Match_Datum": m['Datum'], "Tijd": m['Tijd'], "Wedstrijd": f"[{m['Sport']}] {m['Match']}", "Keuze": m['Keuze'], "Odd": m['Odd'], "Status": "OPEN"})
-                st.session_state.export_data.append({k: "" for k in ["Slip_ID", "Match_Datum", "Tijd", "Wedstrijd", "Keuze", "Odd", "Status"]})
+        if best_combo:
+            for m in best_combo:
+                st.session_state.export_data.append({
+                    "Slip_ID": f"Target {target} (@{f_odd})", "Match_Datum": m['Datum'], "Tijd": m['Tijd'], 
+                    "Wedstrijd": f"[{m['Sport']}] {m['Match']}", "Keuze": m['Keuze'], "Odd": m['Odd'], "Status": "OPEN"
+                })
+            st.session_state.export_data.append({k: "" for k in ["Slip_ID", "Match_Datum", "Tijd", "Wedstrijd", "Keuze", "Odd", "Status"]})
 
-# --- DOWNLOAD ---
+# --- DOWNLOAD SECTIE ---
 if st.session_state.export_data:
-    csv = pd.DataFrame(st.session_state.export_data).to_csv(index=False).encode('utf-8')
-    st.download_button("📥 DOWNLOAD VOOR PRO BET TRACKER", csv, f"multi_market_{VANDAAG_STR}.csv", "text/csv")
+    st.subheader("📑 Klaar voor Import")
+    df_export = pd.DataFrame(st.session_state.export_data)
+    st.table(df_export.head(10)) # Toon een preview
+    csv = df_export.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 DOWNLOAD CSV VOOR GOOGLE SHEETS", csv, "pro_punter_export.csv", "text/csv")
