@@ -1,29 +1,30 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import random
 
 # --- CONFIG ---
-st.set_page_config(page_title="Pro Punter - 422 Fix", layout="wide")
+st.set_page_config(page_title="Pro Punter - Alleen Vanavond", layout="wide")
 API_KEY = 'ae33f20cd78d0b2b015703ded3330fcb'
 
-st.title("⚖️ Pro Punter - Evening Session (Fix)")
-st.sidebar.write(f"💳 Credits: 321")
+st.title("⚖️ Pro Punter - Strikt Vanavond (25-02)")
+st.sidebar.write(f"💳 Credits: ~320")
 
-# De belangrijkste leagues voor vanavond (Champions League, NBA, etc.)
+# Belangrijke leagues voor vanavond
 TARGET_LEAGUES = [
     "soccer_uefa_champs_league", "soccer_epl", "basketball_nba", 
-    "soccer_netherlands_eredivisie", "soccer_spain_la_liga"
+    "soccer_netherlands_eredivisie", "soccer_spain_la_liga", "soccer_portugal_primeira_liga"
 ]
 
-def get_clean_bets():
+def get_tonight_only():
     all_data = []
     now = datetime.now(timezone.utc)
+    # HARDE STOP: Morgenochtend 06:00 (zodat we de NBA van vannacht nog wel hebben)
+    hard_stop = datetime(2026, 2, 26, 6, 0, tzinfo=timezone.utc)
     
-    with st.spinner("Scannen van avondmarkten..."):
+    with st.spinner("Alleen wedstrijden voor vanavond en vannacht zoeken..."):
         for league in TARGET_LEAGUES:
-            # We doen 1 markt per keer om de 422 error te voorkomen
             url = f"https://api.the-odds-api.com/v4/sports/{league}/odds/"
             params = {
                 'apiKey': API_KEY,
@@ -37,8 +38,9 @@ def get_clean_bets():
                     games = r.json()
                     for g in games:
                         m_time = datetime.fromisoformat(g['commence_time'].replace('Z', '+00:00'))
-                        # Alleen wedstrijden van vanavond (na nu)
-                        if m_time > now:
+                        
+                        # STRIKTE FILTER: Na NU en voor MORGENOCHTEND 06:00
+                        if now < m_time < hard_stop:
                             if g.get('bookmakers'):
                                 bm = g['bookmakers'][0]
                                 for m in bm['markets']:
@@ -47,7 +49,7 @@ def get_clean_bets():
                                         # Professional Safe Range
                                         if 1.10 <= price <= 1.55:
                                             label = ""
-                                            if m['key'] == 'h2h': label = f"Favoriet scoort/wint: {o['name']}"
+                                            if m['key'] == 'h2h': label = f"Winst/Scoort: {o['name']}"
                                             else: label = f"Goals: {o['name']} {o.get('point','')}"
                                             
                                             all_data.append({
@@ -61,11 +63,11 @@ def get_clean_bets():
     return all_data
 
 # --- UI ---
-if st.button("🚀 GENEREER SLIPS VOOR VANAVOND"):
-    data = get_clean_bets()
+if st.button("🚀 GENEREER SLIPS VOOR VANAVOND (STRIKT)"):
+    data = get_tonight_only()
     
     if data:
-        st.success(f"Gevonden: {len(data)} sterke kansen voor vanavond!")
+        st.success(f"Gevonden: {len(data)} kansen die ECHT vanavond/vannacht plaatsvinden!")
         
         final_rows = []
         for target in [1.5, 2.0, 3.0, 5.0]:
@@ -84,13 +86,14 @@ if st.button("🚀 GENEREER SLIPS VOOR VANAVOND"):
                     })
                 else: break
             
-            final_rows.extend(slip_items)
-            final_rows.append({k: "" for k in ["Slip", "Tijd", "Match", "Keuze", "Odd"]})
+            if slip_items:
+                final_rows.extend(slip_items)
+                final_rows.append({k: "" for k in ["Slip", "Tijd", "Match", "Keuze", "Odd"]})
             
         df = pd.DataFrame(final_rows)
         st.table(df)
         
         csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 DOWNLOAD CSV", csv, "pro_evening_bets.csv", "text/csv")
+        st.download_button("📥 DOWNLOAD CSV", csv, "pro_tonight_only.csv", "text/csv")
     else:
-        st.error("Geen data gevonden. De API is mogelijk tijdelijk overbelast of de markten zijn gesloten.")
+        st.error("Geen wedstrijden meer gevonden voor de rest van de dag. Mogelijk zijn alle relevante matchen al gestart.")
