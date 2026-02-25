@@ -1,33 +1,32 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import random
 
 # --- CONFIG ---
-st.set_page_config(page_title="Pro Punter - Goal Focus", layout="wide")
+st.set_page_config(page_title="Pro Goal Focus", layout="wide")
 API_KEY = 'ae33f20cd78d0b2b015703ded3330fcb'
 
-st.title("⚖️ Pro Punter - Goals & Totals (25-02)")
-st.sidebar.write("🎯 Focus: Over 1.5, Over 2.5 & Winnaar")
+st.title("⚖️ Pro Punter - Goals & BTTS Prioriteit")
 
 TARGET_LEAGUES = [
     "soccer_uefa_champs_league", "soccer_epl", "soccer_spain_la_liga", 
-    "soccer_italy_serie_a", "soccer_netherlands_eredivisie", "basketball_nba"
+    "soccer_italy_serie_a", "soccer_netherlands_eredivisie", "soccer_portugal_primeira_liga"
 ]
 
-def get_goal_markets():
+def get_diverse_bets():
     all_data = []
     now = datetime.now(timezone.utc)
     hard_stop = datetime(2026, 2, 26, 6, 0, tzinfo=timezone.utc)
     
-    with st.spinner("Scannen op Over/Under en Favorieten..."):
+    with st.spinner("Scannen op Goals, BTTS en Favorieten..."):
         for league in TARGET_LEAGUES:
             url = f"https://api.the-odds-api.com/v4/sports/{league}/odds/"
-            # We vragen expliciet 'totals' en 'h2h' op
+            # We dwingen alle drie de markten af
             params = {
                 'apiKey': API_KEY, 'regions': 'eu', 
-                'markets': 'h2h,totals', 'oddsFormat': 'decimal'
+                'markets': 'h2h,totals,btts', 'oddsFormat': 'decimal'
             }
             try:
                 r = requests.get(url, params=params)
@@ -35,7 +34,6 @@ def get_goal_markets():
                     games = r.json()
                     for g in games:
                         m_time = datetime.fromisoformat(g['commence_time'].replace('Z', '+00:00'))
-                        
                         if now < m_time < hard_stop:
                             if g.get('bookmakers'):
                                 bm = g['bookmakers'][0]
@@ -43,17 +41,23 @@ def get_goal_markets():
                                     for o in market['outcomes']:
                                         price = o['price']
                                         
-                                        # Filter op jouw Safe Range (1.10 - 1.55)
-                                        if 1.10 <= price <= 1.55:
+                                        # Professional Safe Range
+                                        if 1.10 <= price <= 1.60:
                                             m_label = ""
-                                            if market['key'] == 'h2h':
-                                                m_label = f"Winst: {o['name']}"
-                                            elif market['key'] == 'totals':
-                                                # Maak het label duidelijk: bijv. "Over 1.5 Goals"
+                                            m_weight = 0 # Prioriteit score
+                                            
+                                            if market['key'] == 'totals':
                                                 m_label = f"Goals: {o['name']} {o.get('point','')}"
+                                                m_weight = 3 # Hoogste prioriteit
+                                            elif market['key'] == 'btts':
+                                                m_label = f"BTTS: {o['name']}"
+                                                m_weight = 2
+                                            elif market['key'] == 'h2h':
+                                                m_label = f"Winst: {o['name']}"
+                                                m_weight = 1 # Laagste prioriteit
                                             
                                             all_data.append({
-                                                "League": league.split('_')[-1].upper(),
+                                                "Weight": m_weight,
                                                 "Tijd": m_time.strftime("%H:%M"),
                                                 "Match": f"{g['home_team']} - {g['away_team']}",
                                                 "Keuze": m_label,
@@ -63,41 +67,36 @@ def get_goal_markets():
     return all_data
 
 # --- UI ---
-if st.button("🚀 GENEREER SLIPS (INCLUSIEF GOALS)"):
-    data = get_goal_markets()
+if st.button("🚀 GENEREER DIVERSE SLIPS"):
+    data = get_diverse_bets()
     
     if data:
-        # Sorteer zodat je eerst 'Goals' ziet in de lijst (optioneel)
-        data.sort(key=lambda x: "Goals" not in x['Keuze'])
+        # SORTEER OP PRIORITEIT: Eerst Goals, dan BTTS, dan pas Winst
+        data.sort(key=lambda x: x['Weight'], reverse=True)
         
-        st.success(f"Gevonden: {len(data)} kansen (incl. Under/Over)!")
+        st.success(f"Totaal {len(data)} opties gevonden. Prioriteit gegeven aan Goal-markten.")
         
         final_rows = []
         for target in [1.5, 2.0, 3.0, 5.0]:
-            random.shuffle(data)
+            # We schudden de data niet volledig willekeurig, 
+            # maar houden de goal-markten (Weight 3) vaker bovenin.
+            pool = [d for d in data if d['Weight'] >= 2] + [d for d in data if d['Weight'] == 1]
+            
             current_odd = 1.0
             slip_items = []
-            
-            # Probeer een slip te bouwen met minstens 1 Goal markt voor de variatie
-            for item in data:
+            for item in pool:
                 if current_odd < target:
-                    current_odd *= item['Odd']
-                    slip_items.append({
-                        "Slip": f"Target {target} (@{round(current_odd, 2)})",
-                        "Tijd": item['Tijd'], 
-                        "Match": f"[{item['League']}] {item['Match']}", 
-                        "Keuze": item['Keuze'], "Odd": item['Odd']
-                    })
+                    # Voorkom dubbele match in 1 slip
+                    if not any(item['Match'] in s['Match'] for s in slip_items):
+                        current_odd *= item['Odd']
+                        slip_items.append({
+                            "Slip": f"Target {target} (@{round(current_odd, 2)})",
+                            "Tijd": item['Tijd'], "Match": item['Match'], 
+                            "Keuze": item['Keuze'], "Odd": item['Odd']
+                        })
                 else: break
             
-            if slip_items:
-                final_rows.extend(slip_items)
-                final_rows.append({k: "" for k in ["Slip", "Tijd", "Match", "Keuze", "Odd"]})
+            final_rows.extend(slip_items)
+            final_rows.append({k: "" for k in ["Slip", "Tijd", "Match", "Keuze", "Odd"]})
             
-        df = pd.DataFrame(final_rows)
-        st.table(df)
-        
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 DOWNLOAD CSV", csv, "pro_goals_bets.csv", "text/csv")
-    else:
-        st.error("Geen data gevonden. De API heeft voor deze markten momenteel geen odds in de safe-range.")
+        st.table(pd.DataFrame(final_rows))
