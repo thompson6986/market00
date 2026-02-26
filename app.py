@@ -5,7 +5,7 @@ import random
 from datetime import datetime
 
 # --- CONFIG ---
-API_KEY = 'ae33f20cd78d0b2b015703ded3330fcb' 
+API_KEY = '827af58298b4ce09f49d3b85e8' 
 
 st.set_page_config(page_title="Pro Punter - Goal Fix", layout="wide")
 st.title("⚖️ Pro Punter - Goals & Slips (259 Credits Mode)")
